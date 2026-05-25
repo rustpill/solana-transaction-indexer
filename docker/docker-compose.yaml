@@ -1,0 +1,175 @@
+# Kafka starts ->
+# kafka-init creates topics ->
+# Kafka Connect starts -> 
+# connector-init registers connectors
+
+services:
+  # Create Kafka cluster
+  kafka:
+    image: confluentinc/cp-kafka:7.9.0
+    container_name: kafka
+    hostname: kafka
+    ports:
+      - "9092:9092"   # external (host)
+      - "9093:9093"   # internal controller
+    environment:
+
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+
+      # Listeners
+      # PLAINTEXT -> used by other containers inside Docker network (kafka-connect, kafka-init, connector-init)
+      # EXTERNAL -> used by your app on host machine (producers running locally)
+      # CONTROLLER -> KRaft internal only
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,EXTERNAL://localhost:9092 # Docker -> kafka:29092, Host app -> localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT # unencrypted
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+
+      # Topic defaults
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"   # we create topics explicitly
+
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_LOG_RETENTION_HOURS: 24
+
+      # Cluster ID
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID}
+
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  # Topic init (runs once)
+  kafka-init:
+    image: confluentinc/cp-kafka:7.9.0
+    container_name: kafka-init
+    # Wait for kafka health check before running
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command: |
+      "
+      echo 'Creating topics...'
+
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists \
+        --topic sol.buys \
+        --partitions 6 \
+        --replication-factor 1 \
+        --config retention.ms=86400000
+
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists \
+        --topic sol.sells \
+        --partitions 6 \
+        --replication-factor 1 \
+        --config retention.ms=86400000
+
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists \
+        --topic sol.failed \
+        --partitions 1 \
+        --replication-factor 1 \
+        --config retention.ms=604800000
+
+      echo 'Topics created:'
+      kafka-topics --bootstrap-server kafka:29092 --list
+      "
+    restart: "no"
+
+  # Kafka Connect Platform/Framework
+  kafka-connect:
+    image: confluentinc/cp-kafka-connect:7.9.0
+    container_name: kafka-connect
+    # Install the Snowflake plugin on first startup, then launch Connect normally
+    # Should skip if restarted (plugin already in /usr/share/confluent-hub-components).
+    command:
+      - bash
+      - -c
+      - |
+        echo "Installing Snowflake Kafka connector plugin..."
+        confluent-hub install --no-prompt snowflakedb/kafka-connector:3.5.2
+        echo "Starting Kafka Connect..."
+        /etc/confluent/docker/run
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8083:8083"   # REST API for managing connectors
+    environment:
+      # Connect cluster settings
+      CONNECT_BOOTSTRAP_SERVERS: kafka:29092
+      CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
+      CONNECT_REST_PORT: 8083
+      CONNECT_GROUP_ID: solana-connect-group
+
+      # Internal topics Connect uses to store state
+      CONNECT_CONFIG_STORAGE_TOPIC: _connect-configs
+      CONNECT_OFFSET_STORAGE_TOPIC: _connect-offsets
+      CONNECT_STATUS_STORAGE_TOPIC: _connect-status
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+
+      # Serialisation plain JSON, no Schema Registry needed
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+      CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+
+      # Plugin path where the Snowflake JAR lives
+      CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components
+
+      # Snowflake credentials (injected from .env via docker compose)
+      SNOWFLAKE_URL_NAME: ${SNOWFLAKE_ACCOUNT_URL}
+      SNOWFLAKE_USER_NAME: ${SNOWFLAKE_ACCOUNT_NAME}
+      SNOWFLAKE_PRIVATE_KEY: ${SNOWFLAKE_PRIVATE_KEY}
+      SNOWFLAKE_DATABASE: ${SNOWFLAKE_DATABASE}
+      SNOWFLAKE_SCHEMA: ${SNOWFLAKE_SCHEMA}
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/connectors"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  # Connector registration (runs once after Connect is healthy)
+  connector-init:
+    image: curlimages/curl:latest
+    container_name: connector-init
+    depends_on:
+      kafka-connect:
+        condition: service_healthy
+    volumes:
+      - ./connect:/configs
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      "
+      echo 'Registering sol.buys connector...'
+      curl -s -X POST http://kafka-connect:8083/connectors \
+        -H 'Content-Type: application/json' \
+        -d @/configs/buys-connector.json
+
+      echo 'Registering sol.sells connector...'
+      curl -s -X POST http://kafka-connect:8083/connectors \
+        -H 'Content-Type: application/json' \
+        -d @/configs/sells-connector.json
+
+      echo 'Registering sol.failed connector...'
+      curl -s -X POST http://kafka-connect:8083/connectors \
+        -H 'Content-Type: application/json' \
+        -d @/configs/failed-connector.json
+
+      echo 'Done. Connector status:'
+      curl -s http://kafka-connect:8083/connectors?expand=status
+      "
+    restart: "no"
+
+volumes:
+  kafka-data:

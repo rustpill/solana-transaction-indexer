@@ -1,0 +1,23 @@
+{
+  "name": "snowflake-failed-sink",
+  "config": {
+    "connector.class": "com.snowflake.kafka.connector.SnowflakeSinkConnector",
+    "tasks.max": "1",
+
+    "topics": "sol.failed",
+    "snowflake.topic2table.map": "sol.failed:FAILED_TXS",
+
+    "snowflake.url.name": "${env:SNOWFLAKE_ACCOUNT_URL}",
+    "snowflake.user.name": "${env:SNOWFLAKE_ACCOUNT_NAME}",
+    "snowflake.private.key": "${env:SNOWFLAKE_PRIVATE_KEY}",
+    "snowflake.database.name":"${env:SNOWFLAKE_DATABASE}",
+    "snowflake.schema.name": "${env:SNOWFLAKE_SCHEMA}",
+
+    "snowflake.ingestion.method": "SNOWPIPE_STREAMING",
+    "snowflake.enable.schematization": "TRUE",
+
+    "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable": "false"
+  }
+}
