@@ -1,2 +1,4 @@
 .env
 keys/
+.venv
+producer/__pycache__/
