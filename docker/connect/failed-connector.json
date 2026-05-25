@@ -8,11 +8,11 @@
     "snowflake.topic2table.map": "sol.failed:FAILED_TXS",
 
     "snowflake.url.name": "${env:SNOWFLAKE_ACCOUNT_URL}",
-    "snowflake.user.name": "${env:SNOWFLAKE_ACCOUNT_NAME}",
+    "snowflake.user.name": "${env:SNOWFLAKE_LOGIN_NAME}",
     "snowflake.private.key": "${env:SNOWFLAKE_PRIVATE_KEY}",
     "snowflake.database.name":"${env:SNOWFLAKE_DATABASE}",
     "snowflake.schema.name": "${env:SNOWFLAKE_SCHEMA}",
-
+    "snowflake.role.name": "KAFKA_ROLE",
     "snowflake.ingestion.method": "SNOWPIPE_STREAMING",
     "snowflake.enable.schematization": "TRUE",
 

@@ -22,7 +22,7 @@ services:
       # PLAINTEXT -> used by other containers inside Docker network (kafka-connect, kafka-init, connector-init)
       # EXTERNAL -> used by your app on host machine (producers running locally)
       # CONTROLLER -> KRaft internal only
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_LISTENERS: PLAINTEXT://:29092,EXTERNAL://:9092,CONTROLLER://:9093
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,EXTERNAL://localhost:9092 # Docker -> kafka:29092, Host app -> localhost:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT # unencrypted
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
@@ -59,25 +59,13 @@ services:
     command: |
       "
       echo 'Creating topics...'
-
-      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists \
-        --topic sol.buys \
-        --partitions 6 \
-        --replication-factor 1 \
-        --config retention.ms=86400000
-
-      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists \
-        --topic sol.sells \
-        --partitions 6 \
-        --replication-factor 1 \
-        --config retention.ms=86400000
-
-      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists \
-        --topic sol.failed \
-        --partitions 1 \
-        --replication-factor 1 \
-        --config retention.ms=604800000
-
+ 
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic sol.buys --partitions 6 --replication-factor 1 --config retention.ms=86400000
+ 
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic sol.sells --partitions 6 --replication-factor 1 --config retention.ms=86400000
+ 
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic sol.failed --partitions 1 --replication-factor 1 --config retention.ms=604800000
+ 
       echo 'Topics created:'
       kafka-topics --bootstrap-server kafka:29092 --list
       "
@@ -94,7 +82,7 @@ services:
       - -c
       - |
         echo "Installing Snowflake Kafka connector plugin..."
-        confluent-hub install --no-prompt snowflakedb/kafka-connector:3.5.2
+        confluent-hub install --no-prompt snowflakeinc/snowflake-kafka-connector:2.2.2
         echo "Starting Kafka Connect..."
         /etc/confluent/docker/run
     depends_on:
@@ -125,9 +113,13 @@ services:
       # Plugin path where the Snowflake JAR lives
       CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components
 
+      # Config provider
+      CONNECT_CONFIG_PROVIDERS: env
+      CONNECT_CONFIG_PROVIDERS_ENV_CLASS: org.apache.kafka.common.config.provider.EnvVarConfigProvider
+
       # Snowflake credentials (injected from .env via docker compose)
-      SNOWFLAKE_URL_NAME: ${SNOWFLAKE_ACCOUNT_URL}
-      SNOWFLAKE_USER_NAME: ${SNOWFLAKE_ACCOUNT_NAME}
+      SNOWFLAKE_ACCOUNT_URL: ${SNOWFLAKE_ACCOUNT_URL}
+      SNOWFLAKE_LOGIN_NAME: ${SNOWFLAKE_LOGIN_NAME}
       SNOWFLAKE_PRIVATE_KEY: ${SNOWFLAKE_PRIVATE_KEY}
       SNOWFLAKE_DATABASE: ${SNOWFLAKE_DATABASE}
       SNOWFLAKE_SCHEMA: ${SNOWFLAKE_SCHEMA}
@@ -152,19 +144,13 @@ services:
     command: |
       "
       echo 'Registering sol.buys connector...'
-      curl -s -X POST http://kafka-connect:8083/connectors \
-        -H 'Content-Type: application/json' \
-        -d @/configs/buys-connector.json
+      curl -s -X POST http://kafka-connect:8083/connectors -H 'Content-Type: application/json' -d @/configs/buys-connector.json
 
       echo 'Registering sol.sells connector...'
-      curl -s -X POST http://kafka-connect:8083/connectors \
-        -H 'Content-Type: application/json' \
-        -d @/configs/sells-connector.json
+      curl -s -X POST http://kafka-connect:8083/connectors -H 'Content-Type: application/json' -d @/configs/sells-connector.json
 
       echo 'Registering sol.failed connector...'
-      curl -s -X POST http://kafka-connect:8083/connectors \
-        -H 'Content-Type: application/json' \
-        -d @/configs/failed-connector.json
+      curl -s -X POST http://kafka-connect:8083/connectors -H 'Content-Type: application/json' -d @/configs/failed-connector.json
 
       echo 'Done. Connector status:'
       curl -s http://kafka-connect:8083/connectors?expand=status
