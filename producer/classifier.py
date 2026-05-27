@@ -158,7 +158,6 @@ def _publish_to_kafka(producer, topic: str, key: str, value: dict):
             key=key.encode('utf-8'),
             value=json.dumps(value).encode('utf-8')
         )
-        producer.flush()  # Ensure it's sent immediately
     
     except Exception as e:
         logger.error(f"Failed to publish to Kafka topic {topic}: {e}")
